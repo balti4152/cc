@@ -1,4 +1,3 @@
--- Busqueda de perifericos
 local speaker = nil
 local drive = nil
 local monitor = nil
@@ -30,7 +29,62 @@ if monitor then
 end
 
 local decoder = require("cc.audio.dfpwm")
-local btnY = 8
+
+local function animacionCarga(url)
+    local frames = {
+        "[      ]",
+        "[=     ]",
+        "[==    ]",
+        "[===   ]",
+        "[ ===  ]",
+        "[  === ]",
+        "[   ===]",
+        "[    ==]",
+        "[     =]",
+        "[      ]"
+    }
+    local i = 1
+    
+    -- Inicia la descarga en segundo plano
+    http.request({ url = url, binary = true })
+    
+    while true do
+        term.redirect(pantalla)
+        term.setBackgroundColor(colors.black)
+        term.clear()
+        
+        local w, h = term.getSize()
+        term.setTextColor(colors.green)
+        term.setCursorPos(math.floor(w/2) - 7, math.floor(h/2) - 1)
+        print("Leyendo Disco...")
+        
+        term.setTextColor(colors.white)
+        term.setCursorPos(math.floor(w/2) - 3, math.floor(h/2))
+        print(frames[i])
+        
+        term.redirect(terminal_original)
+        
+        local timer = os.startTimer(0.15)
+        
+        -- Esperar respuesta o eventos
+        while true do
+            local event, p1, p2 = os.pullEvent()
+            
+            if event == "http_success" then
+                return p2 -- Retorna el objeto de la descarga
+            elseif event == "http_failure" then
+                return nil
+            elseif event == "disk_eject" or not drive.isDiskPresent() then
+                return nil
+            elseif event == "timer" and p1 == timer then
+                break -- Cambia de frame
+            end
+        end
+        
+        i = i + 1
+        if i > #frames then i = 1 end
+    end
+end
 
 local function dibujarInterfaz(cancion, progreso, total, pausado)
     term.redirect(pantalla)
@@ -70,7 +124,10 @@ local function dibujarInterfaz(cancion, progreso, total, pausado)
     local min = math.floor(progreso / 60)
     term.write(string.format("%02d:%02d", min, seg))
     
+    -- Botones siempre abajo
+    local btnY = h - 2
     term.setCursorPos(2, btnY)
+    
     if pausado then
         term.setTextColor(colors.black)
         term.setBackgroundColor(colors.green)
@@ -92,28 +149,31 @@ local function dibujarInterfaz(cancion, progreso, total, pausado)
 end
 
 local function reproducir(url, nombre_cancion)
-    local respuesta, err = http.get({ url = url, binary = true })
+    -- Pantalla de carga animada
+    local respuesta = animacionCarga(url)
+    
     if not respuesta then 
         term.redirect(pantalla)
         term.clear()
         term.setCursorPos(2,2)
         term.setTextColor(colors.red)
-        print("Error de conexion.")
+        if drive.isDiskPresent() then
+            print("Error de lectura.")
+            sleep(2)
+        end
         term.redirect(terminal_original)
-        sleep(2)
         return 
     end
 
     local decode = decoder.make_decoder()
     local headers = respuesta.getResponseHeaders()
-    local tamanoTotal = tonumber(headers["Content-Length"]) or 1000000
-    local totalSegundos = tamanoTotal / 6000 
+    local pesoTotal = tonumber(headers["Content-Length"]) or 1000000
+    local totalSegundos = pesoTotal / 6000 
     
     local bytesLeidos = 0
     local pausado = false
     local adelantar = false
 
-    -- Hilo 1: Maneja unicamente el flujo de audio
     local function hiloAudio()
         while true do
             if not drive.isDiskPresent() then return end
@@ -121,36 +181,29 @@ local function reproducir(url, nombre_cancion)
             if pausado then
                 sleep(0.1)
             elseif adelantar then
-                local bytes_a_saltar = 60000
-                local leidos_salto = 0
-                while leidos_salto < bytes_a_saltar do
+                local meta = bytesLeidos + 60000
+                while bytesLeidos < meta do
                     local chunk = respuesta.read(16 * 1024)
-                    if not chunk then return end
-                    leidos_salto = leidos_salto + #chunk
+                    if not chunk or #chunk == 0 then break end
                     bytesLeidos = bytesLeidos + #chunk
                 end
                 adelantar = false
             else
                 local chunk = respuesta.read(16 * 1024)
-                if not chunk then return end 
+                if not chunk or #chunk == 0 then return end 
                 
                 bytesLeidos = bytesLeidos + #chunk
                 local buffer = decode(chunk)
                 
-                while true do
-                    if not drive.isDiskPresent() then return end
-                    if speaker.playAudio(buffer) then
-                        break
-                    else
-                        local event = {os.pullEvent()}
-                        if event[1] == "disk_eject" then return end
-                    end
+                while not speaker.playAudio(buffer) do
+                    local event = os.pullEvent()
+                    if event == "disk_eject" or not drive.isDiskPresent() then return end
+                    if event == "speaker_audio_empty" then break end
                 end
             end
         end
     end
 
-    -- Hilo 2: Maneja la interfaz a 30 FPS y los botones
     local function hiloUI()
         local frameTime = 1 / 30
         local temporizador = os.startTimer(frameTime)
@@ -167,13 +220,20 @@ local function reproducir(url, nombre_cancion)
                 
             elseif event == "monitor_touch" then
                 local x, y = p2, p3
-                if y == btnY then
-                    if x >= 2 and x <= 8 then
+                local w, h = pantalla.getSize()
+                local btnY = h - 2
+                
+                -- Detectar click en botones (hitbox ampliado)
+                if y >= btnY - 1 and y <= btnY + 1 then
+                    if x >= 1 and x <= 9 then
                         pausado = not pausado
-                    elseif x >= 11 and x <= 16 then
+                    elseif x >= 10 and x <= 18 then
                         adelantar = true
                         pausado = false
                     end
+                    -- Forzar dibujo inmediato para no sentir lag
+                    local progresoActual = bytesLeidos / 6000
+                    dibujarInterfaz(nombre_cancion, progresoActual, totalSegundos, pausado)
                 end
                 
             elseif event == "disk_eject" then
@@ -182,7 +242,6 @@ local function reproducir(url, nombre_cancion)
         end
     end
 
-    -- Ejecuta ambos hilos al mismo tiempo. Si uno termina (ej: sacas el disco), el otro frena.
     parallel.waitForAny(hiloAudio, hiloUI)
     
     respuesta.close()
@@ -194,10 +253,11 @@ local function grabar(path)
     term.setBackgroundColor(colors.black)
     term.clear()
     term.setTextColor(colors.green)
-    term.setCursorPos(2, 2)
-    print("DISCO NUEVO")
+    local w, h = term.getSize()
+    term.setCursorPos(math.floor(w/2) - 5, math.floor(h/2) - 1)
+    print("Disco Vacio")
     term.setTextColor(colors.gray)
-    term.setCursorPos(2, 4)
+    term.setCursorPos(math.floor(w/2) - 10, math.floor(h/2) + 1)
     print("Configurar en consola")
     
     term.redirect(terminal_original)
@@ -205,9 +265,9 @@ local function grabar(path)
     term.clear()
     term.setTextColor(colors.green)
     term.setCursorPos(1, 1)
-    print("=== GRABAR DISCO ===")
+    print("=== GRABAR ===")
     term.setTextColor(colors.white)
-    print("1. Pega la URL:")
+    print("1. URL:")
     
     local url = read()
     
@@ -232,7 +292,9 @@ while true do
     term.setBackgroundColor(colors.black)
     term.clear()
     term.setTextColor(colors.gray)
-    term.setCursorPos(2, 2)
+    local w, h = term.getSize()
+    -- Centrado perfecto para cualquier monitor
+    term.setCursorPos(math.floor(w/2) - 6, math.floor(h/2))
     print("Insertar Disco")
     term.redirect(terminal_original)
 
@@ -245,7 +307,7 @@ while true do
             if fs.exists(archivoNuevo) then
                 local f = fs.open(archivoNuevo, "r")
                 local url = f.readLine()
-                local nombre = f.readLine() or "Pista Desconocida"
+                local nombre = f.readLine() or "Desconocido"
                 f.close()
                 reproducir(url, nombre)
             elseif fs.exists(archivoViejo) then
