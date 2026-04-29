@@ -1,7 +1,6 @@
--- Busqueda automatica de perifericos
+-- Busqueda de perifericos en todos los lados
 local speaker = nil
 local drive = nil
-
 local lados = {"top", "bottom", "front", "back", "left", "right"}
 
 for _, lado in ipairs(lados) do
@@ -12,32 +11,28 @@ for _, lado in ipairs(lados) do
     end
 end
 
--- Validacion de conexion
 if not speaker or not drive then
     term.clear()
     term.setCursorPos(1,1)
-    print("Error: Perifericos faltantes.")
-    if not speaker then print("- Falta Speaker") end
-    if not drive then print("- Falta Lector (Drive)") end
+    print("Error: Conecta speaker y drive.")
     return
 end
 
 local decoder = require("cc.audio.dfpwm")
 
-local function limpiarPantalla()
+local function limpiar()
     term.clear()
-    term.setCursorPos(1, 1)
+    term.setCursorPos(1,1)
 end
 
-local function reproducirMusica(url)
-    limpiarPantalla()
-    print("Reproduciendo: Streaming...")
-    print("Mantén 'q' para salir")
+local function reproducir(url)
+    limpiar()
+    print("Reproduciendo automaticamente...")
+    print("Pulsa 'q' para detener y expulsar")
     
     local respuesta, err = http.get({ url = url, binary = true })
     if not respuesta then
-        print("Error de conexion:")
-        print(err)
+        print("Error de conexion.")
         sleep(2)
         return
     end
@@ -46,96 +41,69 @@ local function reproducirMusica(url)
     while true do
         local chunk = respuesta.read(16 * 1024)
         if not chunk then break end
+        local buffer = decode(chunk)
         
-        local buffer_audio = decode(chunk)
-        
-        -- Espera a que el speaker termine de procesar para no saturar
-        while not speaker.playAudio(buffer_audio) do
+        while not speaker.playAudio(buffer) do
             os.pullEvent("speaker_audio_empty")
         end
         
-        -- Check de salida rapida
-        if isKeyDown and isKeyDown(keys.q) then 
-            break 
+        -- Si presionas Q, para la musica y sale
+        if os.pullEventRaw("key") and arg[1] == keys.q then
+            break
         end
         
-        -- Pequeno delay para permitir otros eventos
-        sleep(0.05)
+        -- Si sacas el disco fisicamente, para el streaming
+        if not drive.isDiskPresent() then
+            break
+        end
     end
-    
     respuesta.close()
-    print("Reproduccion terminada.")
-    sleep(1.5)
 end
 
-local function grabarDisco(mountPath)
-    limpiarPantalla()
-    print("--- Grabador de Discos ---")
-    print("Pega el link de OpenDrive:")
+local function grabar(path)
+    limpiar()
+    print("=== DISKO VACIO ===")
+    print("Pega la URL de streaming:")
     local url = read()
-    
     if url ~= "" then
-        local f = fs.open(mountPath .. "/song_url.txt", "w")
+        local f = fs.open(path .. "/song_url.txt", "w")
         f.write(url)
         f.close()
-        print("URL guardada en el disco.")
-    else
-        print("Operacion cancelada.")
+        print("Guardado. Reiniciando...")
+        sleep(1)
     end
-    sleep(1.5)
 end
 
-local function iniciarMenu()
-    while true do
-        limpiarPantalla()
-        print("== SISTEMA DE AUDIO TURTLE ==")
-        
-        if not drive.isDiskPresent() then
-            print("\n[ Esperando disco... ]")
-            while not drive.isDiskPresent() do
-                sleep(0.5)
-            end
-        end
-        
-        local mountPath = drive.getMountPath()
-        if not mountPath then
-            print("Error: No se pudo leer el disco.")
-            sleep(1)
-        else
-            local archivoUrl = mountPath .. "/song_url.txt"
-            
-            if fs.exists(archivoUrl) then
-                local f = fs.open(archivoUrl, "r")
-                local urlData = f.readAll()
+local function checkDisco()
+    if drive.isDiskPresent() then
+        local path = drive.getMountPath()
+        if path then
+            local archivo = path .. "/song_url.txt"
+            if fs.exists(archivo) then
+                local f = fs.open(archivo, "r")
+                local url = f.readAll()
                 f.close()
-                
-                print("\nDisco con musica detectado.")
-                print("1. Reproducir")
-                print("2. Cambiar URL (Borrar)")
-                print("3. Expulsar")
-                
-                local _, key = os.pullEvent("key")
-                if key == keys.one then
-                    reproducirMusica(urlData)
-                elseif key == keys.two then
-                    grabarDisco(mountPath)
-                elseif key == keys.three then
-                    drive.ejectDisk()
-                end
+                reproducir(url)
+                -- Al terminar, opcionalmente puedes expulsarlo o esperar
+                print("Fin de la cancion.")
+                drive.ejectDisk()
             else
-                print("\nDisco vacio / nuevo.")
-                print("1. Grabar URL de streaming")
-                print("2. Expulsar")
-                
-                local _, key = os.pullEvent("key")
-                if key == keys.one then
-                    grabarDisco(mountPath)
-                elseif key == keys.two then
-                    drive.ejectDisk()
-                end
+                grabar(path)
             end
         end
     end
 end
 
-iniciarMenu()
+-- Bucle principal: Espera eventos sin consumir CPU
+limpiar()
+print("Esperando disco (como en un auto)...")
+
+while true do
+    checkDisco() -- Revisar si ya habia uno puesto al iniciar
+    limpiar()
+    print("Sistema listo.")
+    print("Inserta un diskete para comenzar...")
+    
+    -- Espera a que ocurra un evento de disco
+    os.pullEvent("disk") 
+end
