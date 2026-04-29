@@ -1,65 +1,69 @@
--- Configuración
+-- Configuracion
 local apiKey = "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"
 local modelName = "llama-3.1-8b-instant"
 local monitor = peripheral.wrap("top")
 
+-- Historial con instrucciones de formato estrictas
 local chatHistory = {
-    { role = "system", content = "Eres una IA integrada en un terminal de Minecraft. Responde de forma concisa y tecnica." }
+    { 
+        role = "system", 
+        content = "Eres una IA tecnica de Minecraft. Habla en espanol latino. IMPORTANTE: No uses tildes ni la letra enye bajo ninguna circunstancia. Cambia la enye por n y las vocales con tilde por vocales simples. Se breve." 
+    }
 }
 
--- Función para ajustar texto al ancho del monitor
-local function writeWrapped(text, monitor, y)
-    local width, height = monitor.getSize()
-    local words = {}
-    for word in text:gmatch("%S+") do table.insert(words, word) end
+-- Funcion para limpiar texto (seguro de vida por si la IA se olvida)
+local function cleanText(text)
+    local replacements = {
+        ["n"] = "n", ["N"] = "N",
+        ["a"] = "a", ["e"] = "e", ["i"] = "i", ["o"] = "o", ["u"] = "u",
+        ["A"] = "A", ["E"] = "E", ["I"] = "I", ["O"] = "O", ["U"] = "U"
+    }
+    -- Intentar limpiar patrones comunes de acentos y enyes
+    local cleaned = text:gsub("n", "n"):gsub("N", "N")
+    cleaned = cleaned:gsub("[%z\1-\127\194-\244][\128-\191]*", function(c)
+        return replacements[c] or c
+    end)
+    return cleaned
+end
+
+local function colorWrite(text, textColor, bgColor, y)
+    if not monitor then return end
+    monitor.setCursorPos(1, y)
+    monitor.setTextColor(textColor or colors.white)
+    monitor.setBackgroundColor(bgColor or colors.black)
     
-    local line = ""
-    local currentY = y
-    for _, word in ipairs(words) do
-        if #line + #word + 1 > width then
-            monitor.setCursorPos(1, currentY)
-            monitor.write(line)
-            line = word .. " "
-            currentY = currentY + 1
-        else
-            line = line .. word .. " "
-        end
-        if currentY > height then break end
-    end
-    monitor.setCursorPos(1, currentY)
-    monitor.write(line)
-    return currentY + 1
+    local w, _ = monitor.getSize()
+    monitor.write(string.rep(" ", w))
+    monitor.setCursorPos(1, y)
+    
+    -- Limpiamos el texto antes de mandarlo al monitor
+    monitor.write(cleanText(text))
 end
 
 local function refreshUI()
     if not monitor then return end
+    monitor.setBackgroundColor(colors.black)
     monitor.clear()
     monitor.setTextScale(0.5)
-    monitor.setCursorPos(1, 1)
-    monitor.setTextColor(colors.cyan)
-    monitor.write("--- TERMINAL IA ---")
     
-    local nextY = 3
-    -- Mostrar los últimos mensajes
-    for i = math.max(2, #chatHistory - 3), #chatHistory do
+    colorWrite(" --- TERMINAL IA (SIN ACENTOS) --- ", colors.black, colors.orange, 1)
+    
+    local currentY = 3
+    for i = math.max(2, #chatHistory - 4), #chatHistory do
         local msg = chatHistory[i]
-        monitor.setTextColor(msg.role == "user" and colors.blue or colors.green)
-        monitor.setCursorPos(1, nextY)
-        monitor.write(msg.role == "user" and "U: " or "AI: ")
+        local prefix = msg.role == "user" and "U: " or "IA: "
+        local pColor = msg.role == "user" and colors.cyan or colors.lime
         
-        monitor.setTextColor(colors.white)
-        nextY = writeWrapped(msg.content, monitor, nextY)
-        if nextY > 12 then break end
+        colorWrite(prefix .. msg.content:sub(1, 22), pColor, colors.black, currentY)
+        currentY = currentY + 1
     end
 end
 
 local function askGroq(input)
     table.insert(chatHistory, { role = "user", content = input })
-    local body = { model = modelName, messages = chatHistory, max_tokens = 150 }
-
     local response = http.post(
         "https://api.groq.com/openai/v1/chat/completions",
-        textutils.serializeJSON(body),
+        textutils.serializeJSON({ model = modelName, messages = chatHistory }),
         { ["Authorization"] = "Bearer " .. apiKey, ["Content-Type"] = "application/json" }
     )
 
@@ -70,27 +74,27 @@ local function askGroq(input)
         table.insert(chatHistory, { role = "assistant", content = content })
         return content
     end
-    return "Error de enlace."
+    return "Error de conexion."
 end
 
--- Bucle principal
+-- Inicio del programa
 term.clear()
 term.setCursorPos(1,1)
-print("Consola lista. Escribe 'clear' para reiniciar chat.")
+term.setTextColor(colors.orange)
+print("Hablar con la IA")
+term.setTextColor(colors.white)
 
 while true do
     refreshUI()
-    term.setTextColor(colors.yellow)
-    write("Mensaje: ")
-    term.setTextColor(colors.white)
-    
+    write("\nMensaje: ")
     local input = read()
+    
     if input == "clear" then
         chatHistory = { chatHistory[1] }
-        print("Historial limpio.")
-    elseif #input > 0 then
-        print("Procesando...")
+        print("Memoria reseteada.")
+    else
+        print("Consultando...")
         local res = askGroq(input)
-        print("\nRespuesta recibida.\n")
+        print("Respuesta: " .. cleanText(res))
     end
 end
