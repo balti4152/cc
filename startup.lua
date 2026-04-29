@@ -3,8 +3,30 @@
 -- ==========================================
 local apiKey = "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"
 local modelName = "llama-3.3-70b-versatile"
-local monitor = peripheral.wrap("top")
+
+-- Encontrar monitor
+local monitor = peripheral.find("monitor")
+if not monitor then
+    local sides = {"top", "bottom", "left", "right", "front", "back"}
+    for _, side in ipairs(sides) do
+        if peripheral.getType(side) == "monitor" then
+            monitor = peripheral.wrap(side)
+            break
+        end
+    end
+end
+
+-- Busqueda Agresiva del Speaker
 local speaker = peripheral.find("speaker")
+if not speaker then
+    local sides = {"left", "right", "top", "bottom", "front", "back"}
+    for _, side in ipairs(sides) do
+        if peripheral.getType(side) == "speaker" then
+            speaker = peripheral.wrap(side)
+            break
+        end
+    end
+end
 
 local chatHistory = {
     { 
@@ -16,10 +38,9 @@ local chatHistory = {
 -- ==========================================
 -- SISTEMA DE AUDIO
 -- ==========================================
-local function playSound(soundName, pitch)
+local function playNoteSafe(instrument, volume, pitch)
     if speaker then
-        -- Formato: playSound(nombre_del_sonido, volumen, pitch)
-        speaker.playSound(soundName, 1.0, pitch or 1.0)
+        speaker.playNote(instrument, volume or 3.0, pitch or 12)
     end
 end
 
@@ -28,34 +49,27 @@ end
 -- ==========================================
 local function cleanText(str)
     if type(str) ~= "string" then return str end
-    
     str = str:gsub("\194\191", "?")
     str = str:gsub("\194\161", "!")
     str = str:gsub("[^\n\32-\126]", "")
-    
     return str
 end
 
 -- ==========================================
--- INTERFAZ GRAFICA (UI Mejorada)
+-- INTERFAZ GRAFICA Y ANIMACION
 -- ==========================================
 local function wrapText(text, maxWidth)
     local lines = {}
     local currentLine = ""
-    
     for word in text:gmatch("%S+") do
         if #currentLine + #word + 1 > maxWidth then
-            if #currentLine > 0 then
-                table.insert(lines, currentLine)
-            end
+            if #currentLine > 0 then table.insert(lines, currentLine) end
             currentLine = word .. " "
         else
             currentLine = currentLine .. word .. " "
         end
     end
-    if #currentLine > 0 then
-        table.insert(lines, currentLine)
-    end
+    if #currentLine > 0 then table.insert(lines, currentLine) end
     return lines
 end
 
@@ -74,7 +88,8 @@ local function drawHeader(w)
     monitor.write(string.rep("-", w))
 end
 
-local function refreshUI()
+-- Parametro animateLast decide si escribimos el ultimo mensaje con efecto
+local function refreshUI(animateLast)
     if not monitor then return end
     monitor.setTextScale(0.5)
     local w, h = monitor.getSize()
@@ -83,6 +98,7 @@ local function refreshUI()
     for i = 2, #chatHistory do
         local msg = chatHistory[i]
         local isUser = (msg.role == "user")
+        local isLastMsg = (i == #chatHistory) and not isUser
         
         local name = isUser and "Usuario" or "Sistema"
         local nameColor = isUser and colors.cyan or colors.lime
@@ -91,17 +107,17 @@ local function refreshUI()
         local safeText = cleanText(msg.content)
         local wrapped = wrapText(safeText, w - 2)
         
-        table.insert(displayLines, {text = " " .. name .. ":", color = nameColor})
-        
+        -- El nombre aparece de golpe
+        table.insert(displayLines, {text = " " .. name .. ":", color = nameColor, animate = false})
+        -- El texto se anima solo si es el ultimo de la IA y pedimos animar
         for _, lineStr in ipairs(wrapped) do
-            table.insert(displayLines, {text = "  " .. lineStr, color = textColor})
+            table.insert(displayLines, {text = "  " .. lineStr, color = textColor, animate = isLastMsg})
         end
-        table.insert(displayLines, {text = "", color = colors.black})
+        table.insert(displayLines, {text = "", color = colors.black, animate = false})
     end
     
     monitor.setBackgroundColor(colors.black)
     monitor.clear()
-    
     drawHeader(w)
     
     local maxLines = h - 2
@@ -114,8 +130,32 @@ local function refreshUI()
         monitor.setCursorPos(1, currentY)
         monitor.setBackgroundColor(colors.black)
         monitor.setTextColor(lineData.color)
-        monitor.write(lineData.text)
+        
+        if animateLast and lineData.animate then
+            -- Efecto de maquina de escribir
+            local charsPerTick = 2 -- Velocidad (mas alto = mas rapido)
+            for charIdx = 1, #lineData.text do
+                monitor.write(lineData.text:sub(charIdx, charIdx))
+                if charIdx % charsPerTick == 0 then
+                    -- Sonido sutil de tecla
+                    playNoteSafe("hat", 0.3, 24)
+                    sleep(0) -- Espera al siguiente tick de Minecraft
+                end
+            end
+            if #lineData.text % charsPerTick ~= 0 then sleep(0) end
+        else
+            -- Escribe la linea entera al instante
+            monitor.write(lineData.text)
+        end
+        
         currentY = currentY + 1
+    end
+    
+    -- Sonido de exito al terminar de escribir toda la pantalla
+    if animateLast then
+        playNoteSafe("bell", 3.0, 12)
+        sleep(0.1)
+        playNoteSafe("bell", 3.0, 16)
     end
 end
 
@@ -124,6 +164,7 @@ end
 -- ==========================================
 local function askGroq(input)
     table.insert(chatHistory, { role = "user", content = input })
+    refreshUI(false) -- Actualiza para mostrar lo que escribio el usuario
     
     local body = {
         model = modelName,
@@ -147,16 +188,15 @@ local function askGroq(input)
             local content = cleanText(data.choices[1].message.content)
             table.insert(chatHistory, { role = "assistant", content = content })
             
-            -- Sonido de notificacion al recibir el mensaje de la IA
-            playSound("block.note_block.bell", 1.5)
-            playSound("block.note_block.chime", 1.0)
+            -- Llama a la funcion UI indicando que haga la animacion
+            refreshUI(true)
             return true
         end
     end
     
     table.insert(chatHistory, { role = "assistant", content = "Error: Senal perdida." })
-    -- Sonido de error grave
-    playSound("block.note_block.bass", 0.5)
+    refreshUI(true)
+    playNoteSafe("bass", 3.0, 1)
     return false
 end
 
@@ -170,27 +210,39 @@ print("=============================")
 print(" GROQ OS INICIADO ")
 print("=============================")
 term.setTextColor(colors.white)
+
+if not speaker then
+    term.setTextColor(colors.red)
+    print("ALERTA: Speaker no detectado fisicamente.")
+    print("Asegurate de que el bloque toca la PC.")
+    term.setTextColor(colors.white)
+else
+    term.setTextColor(colors.green)
+    print("Speaker conectado.")
+    term.setTextColor(colors.white)
+end
+
 print("Escribe 'clear' para reiniciar memoria.\n")
 
--- Sonido de arranque del sistema operativo
-playSound("entity.experience_orb.pickup", 0.8)
-sleep(0.2)
-playSound("entity.experience_orb.pickup", 1.2)
+playNoteSafe("chime", 3.0, 8)
+sleep(0.1)
+playNoteSafe("chime", 3.0, 12)
+sleep(0.1)
+playNoteSafe("chime", 3.0, 16)
 
 while true do
-    refreshUI()
+    refreshUI(false)
     term.setTextColor(colors.cyan)
     write("Comando> ")
     term.setTextColor(colors.white)
     local input = read()
     
-    -- Sonido de click al mandar el mensaje
-    playSound("ui.button.click", 1.2)
+    playNoteSafe("hat", 1.0, 12)
     
     if input == "clear" then
         chatHistory = { chatHistory[1] }
-        print("Memoria borrada con exito.")
-        playSound("block.note_block.pling", 2.0)
+        print("Memoria borrada.")
+        playNoteSafe("pling", 3.0, 24)
     elseif #input > 0 then
         print("Procesando consulta...")
         askGroq(input)
