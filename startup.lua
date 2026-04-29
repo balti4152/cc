@@ -49,7 +49,7 @@ end
 -- REPRODUCTOR DE AUDIO (EASTER EGG EXACTO)
 -- ==========================================
 local function playBailecito()
-    local urlAudio = "https://od.lk/s/MjJfMzcxNjI3NDdf/Rat%20Dance%20Meme%20%20Beginner%20Piano%20Tutorial%20%20Easy%20Piano%20%286%29.dfpwm"
+    local urlAudio = "https://od.lk/s/MjJfMzcxNjI3NTBf/Floricienta%20-%20Mi%20vestido%20azul%20%28letra%29.dfpwm"
 
     if not speaker then
         term.setTextColor(colors.red)
@@ -263,7 +263,7 @@ term.clear()
 term.setCursorPos(1,1)
 term.setTextColor(colors.cyan)
 print("=============================")
-print(" GROQ OS INICIADO ")
+print(" Hablemos :D ")
 print("=============================")
 term.setTextColor(colors.white)
 
@@ -278,8 +278,8 @@ else
     term.setTextColor(colors.white)
 end
 
-print("Escribe 'clear' para reiniciar memoria.")
-print("Escribe 'bailecito' para probar el audio.\n")
+
+
 
 playNoteSafe("chime", 3.0, 8)
 sleep(0.1)
@@ -296,11 +296,11 @@ while true do
     
     playNoteSafe("hat", 1.0, 12)
     
-    if input:lower() == "bailecito" then
+    if input:lower() == "floricienta" then
         playBailecito()
     elseif input:lower() == "clear" then
         chatHistory = { chatHistory[1] }
-        print("Memoria borrada.")
+  
         playNoteSafe("pling", 3.0, 24)
     elseif #input > 0 then
         print("Procesando consulta...")
