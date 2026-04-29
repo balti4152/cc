@@ -25,7 +25,8 @@ end
 
 local pantalla = monitor or terminal_original
 if monitor then
-    monitor.setTextScale(1)
+    -- Achica el tamano de la letra a la mitad
+    monitor.setTextScale(0.5)
 end
 
 local decoder = require("cc.audio.dfpwm")
@@ -45,7 +46,6 @@ local function animacionCarga(url)
     }
     local i = 1
     
-    -- Inicia la descarga en segundo plano
     http.request({ url = url, binary = true })
     
     while true do
@@ -66,18 +66,17 @@ local function animacionCarga(url)
         
         local timer = os.startTimer(0.15)
         
-        -- Esperar respuesta o eventos
         while true do
             local event, p1, p2 = os.pullEvent()
             
             if event == "http_success" then
-                return p2 -- Retorna el objeto de la descarga
+                return p2 
             elseif event == "http_failure" then
                 return nil
             elseif event == "disk_eject" or not drive.isDiskPresent() then
                 return nil
             elseif event == "timer" and p1 == timer then
-                break -- Cambia de frame
+                break
             end
         end
         
@@ -86,7 +85,7 @@ local function animacionCarga(url)
     end
 end
 
-local function dibujarInterfaz(cancion, progreso, total, pausado)
+local function dibujarInterfaz(cancion, progreso, total)
     term.redirect(pantalla)
     term.setBackgroundColor(colors.black)
     term.clear()
@@ -97,7 +96,8 @@ local function dibujarInterfaz(cancion, progreso, total, pausado)
     
     term.setTextColor(colors.white)
     term.setCursorPos(2, 3)
-    local nombre = string.sub(cancion, 1, 25)
+    -- Al ser la letra mas chica, el nombre puede ser mas largo
+    local nombre = string.sub(cancion, 1, 35)
     print(nombre)
 
     local w, h = term.getSize()
@@ -117,39 +117,11 @@ local function dibujarInterfaz(cancion, progreso, total, pausado)
     term.setTextColor(colors.gray)
     term.write(string.rep(".", math.max(0, anchoBarra - completado)))
     term.write("]")
-
-    term.setCursorPos(2, 6)
-    term.setTextColor(colors.white)
-    local seg = math.floor(progreso % 60)
-    local min = math.floor(progreso / 60)
-    term.write(string.format("%02d:%02d", min, seg))
-    
-    -- Botones siempre abajo
-    local btnY = h - 2
-    term.setCursorPos(2, btnY)
-    
-    if pausado then
-        term.setTextColor(colors.black)
-        term.setBackgroundColor(colors.green)
-        term.write(" PLAY ")
-    else
-        term.setTextColor(colors.green)
-        term.setBackgroundColor(colors.gray)
-        term.write(" PAUSA ")
-    end
-    
-    term.setBackgroundColor(colors.black)
-    term.write("  ")
-    term.setTextColor(colors.black)
-    term.setBackgroundColor(colors.green)
-    term.write(" +10s ")
-    term.setBackgroundColor(colors.black)
     
     term.redirect(terminal_original)
 end
 
 local function reproducir(url, nombre_cancion)
-    -- Pantalla de carga animada
     local respuesta = animacionCarga(url)
     
     if not respuesta then 
@@ -169,81 +141,31 @@ local function reproducir(url, nombre_cancion)
     local headers = respuesta.getResponseHeaders()
     local pesoTotal = tonumber(headers["Content-Length"]) or 1000000
     local totalSegundos = pesoTotal / 6000 
-    
     local bytesLeidos = 0
-    local pausado = false
-    local adelantar = false
 
-    local function hiloAudio()
-        while true do
-            if not drive.isDiskPresent() then return end
-            
-            if pausado then
-                sleep(0.1)
-            elseif adelantar then
-                local meta = bytesLeidos + 60000
-                while bytesLeidos < meta do
-                    local chunk = respuesta.read(16 * 1024)
-                    if not chunk or #chunk == 0 then break end
-                    bytesLeidos = bytesLeidos + #chunk
-                end
-                adelantar = false
-            else
-                local chunk = respuesta.read(16 * 1024)
-                if not chunk or #chunk == 0 then return end 
-                
-                bytesLeidos = bytesLeidos + #chunk
-                local buffer = decode(chunk)
-                
-                while not speaker.playAudio(buffer) do
-                    local event = os.pullEvent()
-                    if event == "disk_eject" or not drive.isDiskPresent() then return end
-                    if event == "speaker_audio_empty" then break end
-                end
-            end
-        end
-    end
-
-    local function hiloUI()
-        local frameTime = 1 / 30
-        local temporizador = os.startTimer(frameTime)
+    while true do
+        if not drive.isDiskPresent() then break end
         
-        while true do
-            if not drive.isDiskPresent() then return end
-            
-            local event, p1, p2, p3 = os.pullEvent()
-            
-            if event == "timer" and p1 == temporizador then
-                local progresoActual = bytesLeidos / 6000
-                dibujarInterfaz(nombre_cancion, progresoActual, totalSegundos, pausado)
-                temporizador = os.startTimer(frameTime)
-                
-            elseif event == "monitor_touch" then
-                local x, y = p2, p3
-                local w, h = pantalla.getSize()
-                local btnY = h - 2
-                
-                -- Detectar click en botones (hitbox ampliado)
-                if y >= btnY - 1 and y <= btnY + 1 then
-                    if x >= 1 and x <= 9 then
-                        pausado = not pausado
-                    elseif x >= 10 and x <= 18 then
-                        adelantar = true
-                        pausado = false
-                    end
-                    -- Forzar dibujo inmediato para no sentir lag
-                    local progresoActual = bytesLeidos / 6000
-                    dibujarInterfaz(nombre_cancion, progresoActual, totalSegundos, pausado)
-                end
-                
-            elseif event == "disk_eject" then
-                return
+        local chunk = respuesta.read(16 * 1024)
+        if not chunk or #chunk == 0 then break end 
+        
+        bytesLeidos = bytesLeidos + #chunk
+        local buffer = decode(chunk)
+        
+        local progresoActual = bytesLeidos / 6000
+        dibujarInterfaz(nombre_cancion, progresoActual, totalSegundos)
+        
+        while not speaker.playAudio(buffer) do
+            local event = os.pullEvent()
+            if event == "disk_eject" or not drive.isDiskPresent() then 
+                respuesta.close()
+                speaker.stop()
+                return 
             end
+            if event == "speaker_audio_empty" then break end
         end
     end
 
-    parallel.waitForAny(hiloAudio, hiloUI)
-    
     respuesta.close()
     speaker.stop()
 end
@@ -286,14 +208,12 @@ local function grabar(path)
     end
 end
 
--- Bucle Principal
 while true do
     term.redirect(pantalla)
     term.setBackgroundColor(colors.black)
     term.clear()
     term.setTextColor(colors.gray)
     local w, h = term.getSize()
-    -- Centrado perfecto para cualquier monitor
     term.setCursorPos(math.floor(w/2) - 6, math.floor(h/2))
     print("Insertar Disco")
     term.redirect(terminal_original)
