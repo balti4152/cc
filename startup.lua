@@ -1,46 +1,44 @@
 -- ==========================================
--- CONFIGURACION IA
+-- CONFIGURACION IA Y PERIFERICOS
 -- ==========================================
 local apiKey = "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"
 local modelName = "llama-3.3-70b-versatile"
 local monitor = peripheral.wrap("top")
+local speaker = peripheral.find("speaker")
 
--- Instruccion estricta
 local chatHistory = {
     { 
         role = "system", 
-        content = "Eres una IA en un terminal de Minecraft. IMPORTANTE: Responde en espanol latino pero usando EXCLUSIVAMENTE el alfabeto ingles (ASCII). Reemplaza la 'enye' por 'n'. No uses NINGUNA tilde, acento o caracter especial. Tus respuestas deben ser breves, claras y con un tono robotico avanzado." 
+        content = "Eres una IA en un terminal de Minecraft. IMPORTANTE: Responde en espanol pero usa SOLO el alfabeto ingles estandar. No uses signos de interrogacion invertidos, acentos ni letras especiales. Se breve y directo." 
     }
 }
 
 -- ==========================================
--- FILTRO DE CARACTERES UTF-8 A ASCII
+-- SISTEMA DE AUDIO
 -- ==========================================
--- ComputerCraft usa Lua 5.1 que no entiende UTF-8.
--- Esto intercepta los bytes crudos y los cambia por letras normales.
+local function playSound(soundName, pitch)
+    if speaker then
+        -- Formato: playSound(nombre_del_sonido, volumen, pitch)
+        speaker.playSound(soundName, 1.0, pitch or 1.0)
+    end
+end
+
+-- ==========================================
+-- FILTRO ABSOLUTO DE CARACTERES
+-- ==========================================
 local function cleanText(str)
     if type(str) ~= "string" then return str end
-    -- Minusculas
-    str = str:gsub("\195\161", "a")
-    str = str:gsub("\195\169", "e")
-    str = str:gsub("\195\173", "i")
-    str = str:gsub("\195\179", "o")
-    str = str:gsub("\195\186", "u")
-    str = str:gsub("\195\177", "n")
-    -- Mayusculas
-    str = str:gsub("\195\129", "A")
-    str = str:gsub("\195\137", "E")
-    str = str:gsub("\195\141", "I")
-    str = str:gsub("\195\147", "O")
-    str = str:gsub("\195\154", "U")
-    str = str:gsub("\195\145", "N")
+    
+    str = str:gsub("\194\191", "?")
+    str = str:gsub("\194\161", "!")
+    str = str:gsub("[^\n\32-\126]", "")
+    
     return str
 end
 
 -- ==========================================
--- INTERFAZ GRAFICA (UI Avanzada)
+-- INTERFAZ GRAFICA (UI Mejorada)
 -- ==========================================
-
 local function wrapText(text, maxWidth)
     local lines = {}
     local currentLine = ""
@@ -61,6 +59,21 @@ local function wrapText(text, maxWidth)
     return lines
 end
 
+local function drawHeader(w)
+    monitor.setCursorPos(1, 1)
+    monitor.setBackgroundColor(colors.blue)
+    monitor.setTextColor(colors.white)
+    local title = " GROQ OS - SISTEMA INTELIGENTE "
+    local leftPad = math.floor((w - #title) / 2)
+    local rightPad = w - #title - leftPad
+    monitor.write(string.rep(" ", leftPad) .. title .. string.rep(" ", rightPad))
+    
+    monitor.setCursorPos(1, 2)
+    monitor.setBackgroundColor(colors.gray)
+    monitor.setTextColor(colors.lightGray)
+    monitor.write(string.rep("-", w))
+end
+
 local function refreshUI()
     if not monitor then return end
     monitor.setTextScale(0.5)
@@ -69,38 +82,37 @@ local function refreshUI()
     local displayLines = {}
     for i = 2, #chatHistory do
         local msg = chatHistory[i]
-        local prefix = (msg.role == "user") and "Usr> " or "IA> "
-        local color = (msg.role == "user") and colors.cyan or colors.lime
+        local isUser = (msg.role == "user")
         
-        -- Aplicamos la limpieza aqui por seguridad
+        local name = isUser and "Usuario" or "Sistema"
+        local nameColor = isUser and colors.cyan or colors.lime
+        local textColor = isUser and colors.white or colors.lightGray
+        
         local safeText = cleanText(msg.content)
-        local wrapped = wrapText(prefix .. safeText, w)
+        local wrapped = wrapText(safeText, w - 2)
+        
+        table.insert(displayLines, {text = " " .. name .. ":", color = nameColor})
         
         for _, lineStr in ipairs(wrapped) do
-            table.insert(displayLines, {text = lineStr, color = color})
+            table.insert(displayLines, {text = "  " .. lineStr, color = textColor})
         end
-        table.insert(displayLines, {text = "", color = colors.white})
+        table.insert(displayLines, {text = "", color = colors.black})
     end
     
     monitor.setBackgroundColor(colors.black)
     monitor.clear()
     
-    monitor.setCursorPos(1, 1)
-    monitor.setBackgroundColor(colors.gray)
-    monitor.setTextColor(colors.yellow)
-    local title = " TERMINAL IA ONLINE "
-    local padding = math.floor((w - #title) / 2)
-    monitor.write(string.rep(" ", math.max(0, padding)) .. title .. string.rep(" ", math.max(0, padding + 1)))
-    monitor.setBackgroundColor(colors.black)
+    drawHeader(w)
     
-    local maxLines = h - 1
+    local maxLines = h - 2
     local startIdx = math.max(1, #displayLines - maxLines + 1)
     
-    local currentY = 2
+    local currentY = 3
     for i = startIdx, #displayLines do
         if currentY > h then break end
         local lineData = displayLines[i]
         monitor.setCursorPos(1, currentY)
+        monitor.setBackgroundColor(colors.black)
         monitor.setTextColor(lineData.color)
         monitor.write(lineData.text)
         currentY = currentY + 1
@@ -132,15 +144,19 @@ local function askGroq(input)
         local data = textutils.unserializeJSON(rawData)
         
         if data and data.choices and data.choices[1] then
-            -- Limpiamos el texto justo cuando llega de la API
-            local rawContent = data.choices[1].message.content
-            local content = cleanText(rawContent)
+            local content = cleanText(data.choices[1].message.content)
             table.insert(chatHistory, { role = "assistant", content = content })
+            
+            -- Sonido de notificacion al recibir el mensaje de la IA
+            playSound("block.note_block.bell", 1.5)
+            playSound("block.note_block.chime", 1.0)
             return true
         end
     end
     
     table.insert(chatHistory, { role = "assistant", content = "Error: Senal perdida." })
+    -- Sonido de error grave
+    playSound("block.note_block.bass", 0.5)
     return false
 end
 
@@ -149,23 +165,32 @@ end
 -- ==========================================
 term.clear()
 term.setCursorPos(1,1)
-term.setTextColor(colors.yellow)
+term.setTextColor(colors.cyan)
 print("=============================")
-print("SISTEMA CENTRAL INICIADO")
+print(" GROQ OS INICIADO ")
 print("=============================")
 term.setTextColor(colors.white)
 print("Escribe 'clear' para reiniciar memoria.\n")
 
+-- Sonido de arranque del sistema operativo
+playSound("entity.experience_orb.pickup", 0.8)
+sleep(0.2)
+playSound("entity.experience_orb.pickup", 1.2)
+
 while true do
     refreshUI()
-    term.setTextColor(colors.orange)
-    write("> ")
+    term.setTextColor(colors.cyan)
+    write("Comando> ")
     term.setTextColor(colors.white)
     local input = read()
+    
+    -- Sonido de click al mandar el mensaje
+    playSound("ui.button.click", 1.2)
     
     if input == "clear" then
         chatHistory = { chatHistory[1] }
         print("Memoria borrada con exito.")
+        playSound("block.note_block.pling", 2.0)
     elseif #input > 0 then
         print("Procesando consulta...")
         askGroq(input)
