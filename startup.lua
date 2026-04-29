@@ -46,7 +46,7 @@ local function refreshUI()
     monitor.clear()
     monitor.setTextScale(0.5)
     
-    colorWrite(" --- TERMINAL IA (SIN ACENTOS) --- ", colors.black, colors.orange, 1)
+    colorWrite(" --- Hola! Como puedo ayudarte? --- ", colors.black, colors.orange, 1)
     
     local currentY = 3
     for i = math.max(2, #chatHistory - 4), #chatHistory do
