@@ -2,6 +2,7 @@ local speaker = nil
 local drive = nil
 local monitor = nil
 local lados = {"top", "bottom", "front", "back", "left", "right"}
+local api_base = "https://ipod-2to6magyna-uc.a.run.app/"
 
 for _, lado in ipairs(lados) do
     local tipo = peripheral.getType(lado)
@@ -137,7 +138,8 @@ local function reproducir(url, nombre_cancion)
 
     local decode = decoder.make_decoder()
     local headers = respuesta.getResponseHeaders()
-    local pesoTotal = tonumber(headers["Content-Length"]) or 1000000
+    -- Si es por API quiza no mande el total de bytes, ponemos un estimado alto
+    local pesoTotal = tonumber(headers["Content-Length"]) or 1500000
     local bytesLeidos = 0
 
     while true do
@@ -152,7 +154,6 @@ local function reproducir(url, nombre_cancion)
         dibujarInterfaz(nombre_cancion, bytesLeidos, pesoTotal)
         
         while not speaker.playAudio(buffer) do
-            -- Al usar solo este evento especifico, el audio no se traba nunca
             os.pullEvent("speaker_audio_empty")
         end
     end
@@ -180,21 +181,57 @@ local function grabar(path)
     term.setCursorPos(1, 1)
     print("=== GRABAR ===")
     term.setTextColor(colors.white)
-    print("1. URL:")
+    print("Pega la URL (OpenDrive o YouTube):")
     
     local url = read()
     
     if url ~= "" then
-        print("\n2. Nombre de la cancion:")
-        term.setTextColor(colors.green)
-        local nombre = read()
-        if nombre == "" then nombre = "Pista 1" end
+        local is_yt = string.find(string.lower(url), "youtube%.com") or string.find(string.lower(url), "youtu%.be")
+        local final_url = url
+        local nombre = ""
+
+        if is_yt then
+            print("\nProcesando enlace con YouTube API...")
+            local search_url = api_base .. "?v=2.1&search=" .. textutils.urlEncode(url)
+            local req = http.get(search_url)
+            
+            if req then
+                local data = textutils.unserialiseJSON(req.readAll())
+                req.close()
+                
+                if data and #data > 0 then
+                    local track = data[1]
+                    if track.type == "playlist" and track.playlist_items then
+                        track = track.playlist_items[1]
+                    end
+                    nombre = track.name
+                    final_url = api_base .. "?v=2.1&id=" .. textutils.urlEncode(track.id)
+                    term.setTextColor(colors.green)
+                    print("Exito: " .. nombre)
+                else
+                    term.setTextColor(colors.red)
+                    print("Error: No se pudo leer el video.")
+                    sleep(2)
+                    return
+                end
+            else
+                term.setTextColor(colors.red)
+                print("Error de conexion con la API.")
+                sleep(2)
+                return
+            end
+        else
+            print("\nNombre de la cancion:")
+            term.setTextColor(colors.green)
+            nombre = read()
+            if nombre == "" then nombre = "Pista 1" end
+        end
         
         term.setTextColor(colors.white)
         local f = fs.open(path .. "/song_data.txt", "w")
-        f.write(url .. "\n" .. nombre)
+        f.write(final_url .. "\n" .. nombre)
         f.close()
-        print("\nGuardado.")
+        print("\nGuardado listo para usar.")
         sleep(1)
     end
 end
