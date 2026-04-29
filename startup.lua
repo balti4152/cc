@@ -1,68 +1,69 @@
--- Configuracion de Groq (Basado en tu tabla de modelos)
+-- ==========================================
+-- CONFIGURACION
+-- ==========================================
 local apiKey = "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"
-local url = "https://api.groq.com/openai/v1/chat/completions"
-local modelo = "llama-3.1-8b-instant" -- El mas rapido (560 T/s)
-
+local modelName = "llama-3.1-8b-instant"
 local monitor = peripheral.wrap("top")
 
--- 1. Localizacion GPS
-print("Localizando...")
-local x, y, z = gps.locate()
-
-if not x then
-    print("Error: No se detectan satelites GPS.")
-    return
-end
-
-local posicion = "X:" .. x .. " Y:" .. y .. " Z:" .. z
-print("Coordenadas: " .. posicion)
-
--- 2. Preparar el cuerpo para la API
-local cuerpo = {
-    model = modelo,
-    messages = {
-        {
-            role = "user",
-            content = "Eres un bot de Minecraft. Saluda de forma creativa y menciona que estas en " .. posicion .. ". Se breve."
-        }
-    },
-    max_tokens = 100 -- Limitamos para ahorrar y ser rapidos
-}
-
--- 3. Enviar peticion
-print("Consultando a Groq (" .. modelo .. ")...")
-local response = http.post(
-    url,
-    textutils.serializeJSON(cuerpo),
-    {
-        ["Authorization"] = "Bearer " .. apiKey,
-        ["Content-Type"] = "application/json"
-    }
-)
-
-if response then
-    local sResponse = response.readAll()
-    local data = textutils.unserializeJSON(sResponse)
-    response.close()
-    
-    if data and data.choices then
-        local saludo = data.choices[1].message.content
-        
-        -- Salida al monitor
-        if monitor then
-            monitor.clear()
-            monitor.setTextScale(1)
-            monitor.setCursorPos(1,1)
-            local oldTerm = term.redirect(monitor)
-            print(saludo)
-            term.redirect(oldTerm)
-            print("Listo! Mira el monitor.")
-        else
-            print("\nGroq dice: " .. saludo)
-        end
+-- ==========================================
+-- FUNCIONES UTILES
+-- ==========================================
+local function writeToMonitor(text)
+    if monitor then
+        monitor.clear()
+        monitor.setCursorPos(1, 1)
+        monitor.setTextScale(1)
+        local old = term.redirect(monitor)
+        print(text)
+        term.redirect(old)
     else
-        print("Error: Respuesta de API malformada.")
+        print(text)
     end
-else
-    print("Error: Sin respuesta de Groq. Revisa tu cuota o conexion.")
 end
+
+local function getGroqResponse(prompt)
+    local url = "https://api.groq.com/openai/v1/chat/completions"
+    local body = {
+        model = modelName,
+        messages = {
+            { role = "system", content = "Eres un asistente de Minecraft experto y breve." },
+            { role = "user", content = prompt }
+        }
+    }
+
+    local response = http.post(
+        url,
+        textutils.serializeJSON(body),
+        {
+            ["Authorization"] = "Bearer " .. apiKey,
+            ["Content-Type"] = "application/json"
+        }
+    )
+
+    if response then
+        local data = textutils.unserializeJSON(response.readAll())
+        response.close()
+        return data.choices[1].message.content
+    end
+    return "Error de conexion con Groq."
+end
+
+-- ==========================================
+-- LOGICA PRINCIPAL
+-- ==========================================
+term.clear()
+term.setCursorPos(1,1)
+print("SISTEMA INICIADO")
+
+-- 1. Obtener Ubicacion
+print("Localizando via GPS...")
+local x, y, z = gps.locate()
+local locStr = x and ("X:" .. x .. " Y:" .. y .. " Z:" .. z) or "Desconocida"
+
+-- 2. Consultar IA
+print("Consultando IA...")
+local saludo = getGroqResponse("Saluda al usuario. Ubicacion actual: " .. locStr)
+
+-- 3. Mostrar Resultado
+writeToMonitor(saludo)
+print("Proceso completado.")
