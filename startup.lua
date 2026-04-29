@@ -2,10 +2,10 @@
 -- CONFIGURACION IA
 -- ==========================================
 local apiKey = "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"
-local modelName = "llama-3.3-70b-versatile" -- Modelo muy superior
+local modelName = "llama-3.3-70b-versatile"
 local monitor = peripheral.wrap("top")
 
--- Instruccion estricta para forzar formato ASCII
+-- Instruccion estricta
 local chatHistory = {
     { 
         role = "system", 
@@ -14,10 +14,33 @@ local chatHistory = {
 }
 
 -- ==========================================
+-- FILTRO DE CARACTERES UTF-8 A ASCII
+-- ==========================================
+-- ComputerCraft usa Lua 5.1 que no entiende UTF-8.
+-- Esto intercepta los bytes crudos y los cambia por letras normales.
+local function cleanText(str)
+    if type(str) ~= "string" then return str end
+    -- Minusculas
+    str = str:gsub("\195\161", "a")
+    str = str:gsub("\195\169", "e")
+    str = str:gsub("\195\173", "i")
+    str = str:gsub("\195\179", "o")
+    str = str:gsub("\195\186", "u")
+    str = str:gsub("\195\177", "n")
+    -- Mayusculas
+    str = str:gsub("\195\129", "A")
+    str = str:gsub("\195\137", "E")
+    str = str:gsub("\195\141", "I")
+    str = str:gsub("\195\147", "O")
+    str = str:gsub("\195\154", "U")
+    str = str:gsub("\195\145", "N")
+    return str
+end
+
+-- ==========================================
 -- INTERFAZ GRAFICA (UI Avanzada)
 -- ==========================================
 
--- Divide el texto en renglones exactos segun el ancho del monitor
 local function wrapText(text, maxWidth)
     local lines = {}
     local currentLine = ""
@@ -38,32 +61,30 @@ local function wrapText(text, maxWidth)
     return lines
 end
 
--- Dibuja el chat con scroll automatico desde abajo hacia arriba
 local function refreshUI()
     if not monitor then return end
     monitor.setTextScale(0.5)
     local w, h = monitor.getSize()
     
-    -- Procesamos todo el historial para convertirlo en renglones
     local displayLines = {}
     for i = 2, #chatHistory do
         local msg = chatHistory[i]
         local prefix = (msg.role == "user") and "Usr> " or "IA> "
         local color = (msg.role == "user") and colors.cyan or colors.lime
         
-        local wrapped = wrapText(prefix .. msg.content, w)
+        -- Aplicamos la limpieza aqui por seguridad
+        local safeText = cleanText(msg.content)
+        local wrapped = wrapText(prefix .. safeText, w)
+        
         for _, lineStr in ipairs(wrapped) do
             table.insert(displayLines, {text = lineStr, color = color})
         end
-        -- Separador visual entre mensajes
         table.insert(displayLines, {text = "", color = colors.white})
     end
     
-    -- Limpiamos pantalla
     monitor.setBackgroundColor(colors.black)
     monitor.clear()
     
-    -- Dibujamos el Encabezado centrado
     monitor.setCursorPos(1, 1)
     monitor.setBackgroundColor(colors.gray)
     monitor.setTextColor(colors.yellow)
@@ -72,7 +93,6 @@ local function refreshUI()
     monitor.write(string.rep(" ", math.max(0, padding)) .. title .. string.rep(" ", math.max(0, padding + 1)))
     monitor.setBackgroundColor(colors.black)
     
-    -- Calculamos que lineas caben en pantalla (Scroll)
     local maxLines = h - 1
     local startIdx = math.max(1, #displayLines - maxLines + 1)
     
@@ -112,14 +132,15 @@ local function askGroq(input)
         local data = textutils.unserializeJSON(rawData)
         
         if data and data.choices and data.choices[1] then
-            local content = data.choices[1].message.content
+            -- Limpiamos el texto justo cuando llega de la API
+            local rawContent = data.choices[1].message.content
+            local content = cleanText(rawContent)
             table.insert(chatHistory, { role = "assistant", content = content })
             return true
         end
     end
     
-    -- Si hay error, lo mostramos como mensaje de la IA
-    table.insert(chatHistory, { role = "assistant", content = "Error: Senal perdida con el servidor." })
+    table.insert(chatHistory, { role = "assistant", content = "Error: Senal perdida." })
     return false
 end
 
@@ -143,7 +164,6 @@ while true do
     local input = read()
     
     if input == "clear" then
-        -- Conservamos solo la instruccion principal (posicion 1)
         chatHistory = { chatHistory[1] }
         print("Memoria borrada con exito.")
     elseif #input > 0 then
