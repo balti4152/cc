@@ -3,40 +3,23 @@
 -- ==========================================
 local apiKey = "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"
 local modelName = "llama-3.3-70b-versatile"
+local dfpwm = require("cc.audio.dfpwm")
 
--- Encontrar monitor
 local monitor = peripheral.find("monitor")
-if not monitor then
-    local sides = {"top", "bottom", "left", "right", "front", "back"}
-    for _, side in ipairs(sides) do
-        if peripheral.getType(side) == "monitor" then
-            monitor = peripheral.wrap(side)
-            break
-        end
-    end
-end
-
--- Busqueda Agresiva del Speaker
 local speaker = peripheral.find("speaker")
-if not speaker then
-    local sides = {"left", "right", "top", "bottom", "front", "back"}
-    for _, side in ipairs(sides) do
-        if peripheral.getType(side) == "speaker" then
-            speaker = peripheral.wrap(side)
-            break
-        end
-    end
-end
+
+-- Enlace del Easter Egg
+local urlBailecito = "https://od.lk/s/MjJfMzcxNjI3NDdf/Rat%20Dance%20Meme%20%20Beginner%20Piano%20Tutorial%20%20Easy%20Piano%20%286%29.dfpwm"
 
 local chatHistory = {
     { 
         role = "system", 
-        content = "Eres una IA en un terminal de Minecraft. IMPORTANTE: Responde en espanol pero usa SOLO el alfabeto ingles estandar. No uses signos de interrogacion invertidos, acentos ni letras especiales. Se breve y directo." 
+        content = "Eres una IA en un terminal de Minecraft. IMPORTANTE: Responde en espanol latino pero usa SOLO el alfabeto ingles estandar. No uses signos de interrogacion invertidos, acentos ni letras especiales. Reemplaza la 'enye' por 'n'. Se breve." 
     }
 }
 
 -- ==========================================
--- SISTEMA DE AUDIO
+-- SISTEMA DE AUDIO Y NOTAS
 -- ==========================================
 local function playNoteSafe(instrument, volume, pitch)
     if speaker then
@@ -44,19 +27,41 @@ local function playNoteSafe(instrument, volume, pitch)
     end
 end
 
+-- Funcion para reproducir el streaming del Easter Egg
+local function playEasterEgg(url)
+    if not speaker then return end
+    
+    local response = http.get(url, nil, true)
+    if response then
+        local decoder = dfpwm.make_decoder()
+        while true do
+            local chunk = response.read(16 * 1024)
+            if not chunk then break end
+            local buffer = decoder(chunk)
+            while not speaker.playAudio(buffer) do
+                os.pullEvent("speaker_audio_empty")
+            end
+        end
+        response.close()
+    end
+end
+
 -- ==========================================
--- FILTRO ABSOLUTO DE CARACTERES
+-- FILTRO DE CARACTERES (ASCII PURITY)
 -- ==========================================
 local function cleanText(str)
     if type(str) ~= "string" then return str end
-    str = str:gsub("\194\191", "?")
-    str = str:gsub("\194\161", "!")
+    -- Reemplazo de bytes UTF-8 comunes para evitar enyes y acentos
+    str = str:gsub("\194\191", "?") -- Signo interrogacion
+    str = str:gsub("\194\161", "!") -- Signo exclamacion
+    str = str:gsub("\195\177", "n"):gsub("\195\145", "N") -- enyes
+    -- Limpieza de cualquier otro byte no ASCII
     str = str:gsub("[^\n\32-\126]", "")
     return str
 end
 
 -- ==========================================
--- INTERFAZ GRAFICA Y ANIMACION
+-- INTERFAZ GRAFICA (UI)
 -- ==========================================
 local function wrapText(text, maxWidth)
     local lines = {}
@@ -81,39 +86,35 @@ local function drawHeader(w)
     local leftPad = math.floor((w - #title) / 2)
     local rightPad = w - #title - leftPad
     monitor.write(string.rep(" ", leftPad) .. title .. string.rep(" ", rightPad))
-    
-    monitor.setCursorPos(1, 2)
-    monitor.setBackgroundColor(colors.gray)
-    monitor.setTextColor(colors.lightGray)
-    monitor.write(string.rep("-", w))
 end
 
--- Parametro animateLast decide si escribimos el ultimo mensaje con efecto
-local function refreshUI(animateLast)
+local function refreshUI(animateLast, specialMsg)
     if not monitor then return end
     monitor.setTextScale(0.5)
     local w, h = monitor.getSize()
     
     local displayLines = {}
-    for i = 2, #chatHistory do
-        local msg = chatHistory[i]
-        local isUser = (msg.role == "user")
-        local isLastMsg = (i == #chatHistory) and not isUser
-        
-        local name = isUser and "Usuario" or "Sistema"
-        local nameColor = isUser and colors.cyan or colors.lime
-        local textColor = isUser and colors.white or colors.lightGray
-        
-        local safeText = cleanText(msg.content)
-        local wrapped = wrapText(safeText, w - 2)
-        
-        -- El nombre aparece de golpe
-        table.insert(displayLines, {text = " " .. name .. ":", color = nameColor, animate = false})
-        -- El texto se anima solo si es el ultimo de la IA y pedimos animar
-        for _, lineStr in ipairs(wrapped) do
-            table.insert(displayLines, {text = "  " .. lineStr, color = textColor, animate = isLastMsg})
+    
+    -- Si hay un mensaje especial (como el del Easter Egg)
+    if specialMsg then
+        table.insert(displayLines, {text = specialMsg, color = colors.magenta, animate = true})
+    else
+        for i = 2, #chatHistory do
+            local msg = chatHistory[i]
+            local isUser = (msg.role == "user")
+            local isLast = (i == #chatHistory) and not isUser
+            
+            local name = isUser and "Usuario" or "Sistema"
+            local nCol = isUser and colors.cyan or colors.lime
+            local tCol = isUser and colors.white or colors.lightGray
+            
+            table.insert(displayLines, {text = " " .. name .. ":", color = nCol, animate = false})
+            local wrapped = wrapText(cleanText(msg.content), w - 2)
+            for _, line in ipairs(wrapped) do
+                table.insert(displayLines, {text = "  " .. line, color = tCol, animate = isLast})
+            end
+            table.insert(displayLines, {text = "", color = colors.black, animate = false})
         end
-        table.insert(displayLines, {text = "", color = colors.black, animate = false})
     end
     
     monitor.setBackgroundColor(colors.black)
@@ -122,37 +123,29 @@ local function refreshUI(animateLast)
     
     local maxLines = h - 2
     local startIdx = math.max(1, #displayLines - maxLines + 1)
-    
     local currentY = 3
+    
     for i = startIdx, #displayLines do
         if currentY > h then break end
-        local lineData = displayLines[i]
+        local line = displayLines[i]
         monitor.setCursorPos(1, currentY)
-        monitor.setBackgroundColor(colors.black)
-        monitor.setTextColor(lineData.color)
+        monitor.setTextColor(line.color)
         
-        if animateLast and lineData.animate then
-            -- Efecto de maquina de escribir
-            local charsPerTick = 2 -- Velocidad (mas alto = mas rapido)
-            for charIdx = 1, #lineData.text do
-                monitor.write(lineData.text:sub(charIdx, charIdx))
-                if charIdx % charsPerTick == 0 then
-                    -- Sonido sutil de tecla
-                    playNoteSafe("hat", 0.3, 24)
-                    sleep(0) -- Espera al siguiente tick de Minecraft
+        if animateLast and line.animate then
+            for charIdx = 1, #line.text do
+                monitor.write(line.text:sub(charIdx, charIdx))
+                if charIdx % 2 == 0 then
+                    playNoteSafe("hat", 0.2, 24)
+                    sleep(0.05)
                 end
             end
-            if #lineData.text % charsPerTick ~= 0 then sleep(0) end
         else
-            -- Escribe la linea entera al instante
-            monitor.write(lineData.text)
+            monitor.write(line.text)
         end
-        
         currentY = currentY + 1
     end
     
-    -- Sonido de exito al terminar de escribir toda la pantalla
-    if animateLast then
+    if animateLast and not specialMsg then
         playNoteSafe("bell", 3.0, 12)
         sleep(0.1)
         playNoteSafe("bell", 3.0, 16)
@@ -160,17 +153,17 @@ local function refreshUI(animateLast)
 end
 
 -- ==========================================
--- CONEXION CON GROQ
+-- LOGICA DE COMANDOS E IA
 -- ==========================================
 local function askGroq(input)
     table.insert(chatHistory, { role = "user", content = input })
-    refreshUI(false) -- Actualiza para mostrar lo que escribio el usuario
+    refreshUI(false)
     
     local body = {
         model = modelName,
         messages = chatHistory,
-        max_tokens = 250,
-        temperature = 0.5
+        max_tokens = 200,
+        temperature = 0.6
     }
     
     local response = http.post(
@@ -180,24 +173,17 @@ local function askGroq(input)
     )
 
     if response then
-        local rawData = response.readAll()
+        local data = textutils.unserializeJSON(response.readAll())
         response.close()
-        local data = textutils.unserializeJSON(rawData)
-        
-        if data and data.choices and data.choices[1] then
+        if data and data.choices then
             local content = cleanText(data.choices[1].message.content)
             table.insert(chatHistory, { role = "assistant", content = content })
-            
-            -- Llama a la funcion UI indicando que haga la animacion
             refreshUI(true)
-            return true
+            return
         end
     end
-    
-    table.insert(chatHistory, { role = "assistant", content = "Error: Senal perdida." })
+    table.insert(chatHistory, { role = "assistant", content = "Error de conexion." })
     refreshUI(true)
-    playNoteSafe("bass", 3.0, 1)
-    return false
 end
 
 -- ==========================================
@@ -206,29 +192,8 @@ end
 term.clear()
 term.setCursorPos(1,1)
 term.setTextColor(colors.cyan)
-print("=============================")
-print(" GROQ OS INICIADO ")
-print("=============================")
+print("GROQ OS v3.0 - LISTO")
 term.setTextColor(colors.white)
-
-if not speaker then
-    term.setTextColor(colors.red)
-    print("ALERTA: Speaker no detectado fisicamente.")
-    print("Asegurate de que el bloque toca la PC.")
-    term.setTextColor(colors.white)
-else
-    term.setTextColor(colors.green)
-    print("Speaker conectado.")
-    term.setTextColor(colors.white)
-end
-
-print("Escribe 'clear' para reiniciar memoria.\n")
-
-playNoteSafe("chime", 3.0, 8)
-sleep(0.1)
-playNoteSafe("chime", 3.0, 12)
-sleep(0.1)
-playNoteSafe("chime", 3.0, 16)
 
 while true do
     refreshUI(false)
@@ -239,12 +204,16 @@ while true do
     
     playNoteSafe("hat", 1.0, 12)
     
-    if input == "clear" then
+    if input:lower() == "bailecito" then
+        print("Modo Bailecito Activado...")
+        refreshUI(true, " >>> MODO BAILECITO ACTIVO <<< ")
+        playEasterEgg(urlBailecito)
+        print("Baile finalizado.")
+    elseif input:lower() == "clear" then
         chatHistory = { chatHistory[1] }
-        print("Memoria borrada.")
-        playNoteSafe("pling", 3.0, 24)
+        print("Memoria limpia.")
     elseif #input > 0 then
-        print("Procesando consulta...")
+        print("Pensando...")
         askGroq(input)
     end
 end
