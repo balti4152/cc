@@ -25,7 +25,6 @@ end
 
 local pantalla = monitor or terminal_original
 if monitor then
-    -- Achica el tamano de la letra a la mitad
     monitor.setTextScale(0.5)
 end
 
@@ -96,7 +95,6 @@ local function dibujarInterfaz(cancion, progreso, total)
     
     term.setTextColor(colors.white)
     term.setCursorPos(2, 3)
-    -- Al ser la letra mas chica, el nombre puede ser mas largo
     local nombre = string.sub(cancion, 1, 35)
     print(nombre)
 
@@ -140,7 +138,6 @@ local function reproducir(url, nombre_cancion)
     local decode = decoder.make_decoder()
     local headers = respuesta.getResponseHeaders()
     local pesoTotal = tonumber(headers["Content-Length"]) or 1000000
-    local totalSegundos = pesoTotal / 6000 
     local bytesLeidos = 0
 
     while true do
@@ -152,17 +149,11 @@ local function reproducir(url, nombre_cancion)
         bytesLeidos = bytesLeidos + #chunk
         local buffer = decode(chunk)
         
-        local progresoActual = bytesLeidos / 6000
-        dibujarInterfaz(nombre_cancion, progresoActual, totalSegundos)
+        dibujarInterfaz(nombre_cancion, bytesLeidos, pesoTotal)
         
         while not speaker.playAudio(buffer) do
-            local event = os.pullEvent()
-            if event == "disk_eject" or not drive.isDiskPresent() then 
-                respuesta.close()
-                speaker.stop()
-                return 
-            end
-            if event == "speaker_audio_empty" then break end
+            -- Al usar solo este evento especifico, el audio no se traba nunca
+            os.pullEvent("speaker_audio_empty")
         end
     end
 
