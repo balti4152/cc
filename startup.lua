@@ -3,41 +3,51 @@ local apiKey = "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"
 local modelName = "llama-3.1-8b-instant"
 local monitor = peripheral.wrap("top")
 
--- Historial con instrucciones de formato estrictas
 local chatHistory = {
     { 
         role = "system", 
-        content = "Eres una IA tecnica de Minecraft. Habla en espanol latino. IMPORTANTE: No uses tildes ni la letra enye bajo ninguna circunstancia. Cambia la enye por n y las vocales con tilde por vocales simples. Se breve." 
+        content = "Habla en espanol latino. No uses tildes ni la letra enye. Cambia enye por n. Se muy breve, maximo 20 palabras." 
     }
 }
 
--- Funcion para limpiar texto (seguro de vida por si la IA se olvida)
-local function cleanText(text)
+-- Funcion para eliminar acentos y enyes (Seguridad de pantalla)
+local function clean(text)
     local replacements = {
-        ["n"] = "n", ["N"] = "N",
-        ["a"] = "a", ["e"] = "e", ["i"] = "i", ["o"] = "o", ["u"] = "u",
-        ["A"] = "A", ["E"] = "E", ["I"] = "I", ["O"] = "O", ["U"] = "U"
+        ["á"]="a", ["é"]="e", ["í"]="i", ["ó"]="o", ["ú"]="u",
+        ["Á"]="A", ["É"]="E", ["Í"]="I", ["Ó"]="O", ["Ú"]="U",
+        ["ñ"]="n", ["Ñ"]="N"
     }
-    -- Intentar limpiar patrones comunes de acentos y enyes
-    local cleaned = text:gsub("n", "n"):gsub("N", "N")
-    cleaned = cleaned:gsub("[%z\1-\127\194-\244][\128-\191]*", function(c)
-        return replacements[c] or c
-    end)
-    return cleaned
+    for k, v in pairs(replacements) do
+        text = text:gsub(k, v)
+    end
+    return text
 end
 
-local function colorWrite(text, textColor, bgColor, y)
-    if not monitor then return end
-    monitor.setCursorPos(1, y)
-    monitor.setTextColor(textColor or colors.white)
-    monitor.setBackgroundColor(bgColor or colors.black)
+-- Funcion para escribir sin que se corte el texto
+local function writeWrapped(text, y)
+    if not monitor then return y end
+    local width, height = monitor.getSize()
+    local words = {}
+    for word in text:gmatch("%S+") do table.insert(words, word) end
     
-    local w, _ = monitor.getSize()
-    monitor.write(string.rep(" ", w))
-    monitor.setCursorPos(1, y)
+    local line = ""
+    local currentY = y
     
-    -- Limpiamos el texto antes de mandarlo al monitor
-    monitor.write(cleanText(text))
+    for _, word in ipairs(words) do
+        if #line + #word + 1 > width then
+            monitor.setCursorPos(1, currentY)
+            monitor.write(line)
+            line = word .. " "
+            currentY = currentY + 1
+        else
+            line = line .. word .. " "
+        end
+        if currentY > height then break end
+    end
+    
+    monitor.setCursorPos(1, currentY)
+    monitor.write(line)
+    return currentY + 1
 end
 
 local function refreshUI()
@@ -46,16 +56,24 @@ local function refreshUI()
     monitor.clear()
     monitor.setTextScale(0.5)
     
-    colorWrite(" --- Hola! Como puedo ayudarte? --- ", colors.black, colors.orange, 1)
+    monitor.setCursorPos(1, 1)
+    monitor.setTextColor(colors.black)
+    monitor.setBackgroundColor(colors.orange)
+    local w, _ = monitor.getSize()
+    monitor.write(" TERMINAL IA " .. string.rep(" ", w))
     
-    local currentY = 3
-    for i = math.max(2, #chatHistory - 4), #chatHistory do
+    local nextY = 3
+    for i = math.max(2, #chatHistory - 2), #chatHistory do
         local msg = chatHistory[i]
-        local prefix = msg.role == "user" and "U: " or "IA: "
-        local pColor = msg.role == "user" and colors.cyan or colors.lime
+        monitor.setBackgroundColor(colors.black)
+        monitor.setTextColor(msg.role == "user" and colors.cyan or colors.lime)
+        monitor.setCursorPos(1, nextY)
+        monitor.write(msg.role == "user" and "> U: " or "> IA: ")
         
-        colorWrite(prefix .. msg.content:sub(1, 22), pColor, colors.black, currentY)
-        currentY = currentY + 1
+        monitor.setTextColor(colors.white)
+        nextY = writeWrapped(clean(msg.content), nextY)
+        nextY = nextY + 1
+        if nextY > 12 then break end
     end
 end
 
@@ -63,7 +81,7 @@ local function askGroq(input)
     table.insert(chatHistory, { role = "user", content = input })
     local response = http.post(
         "https://api.groq.com/openai/v1/chat/completions",
-        textutils.serializeJSON({ model = modelName, messages = chatHistory }),
+        textutils.serializeJSON({ model = modelName, messages = chatHistory, max_tokens = 100 }),
         { ["Authorization"] = "Bearer " .. apiKey, ["Content-Type"] = "application/json" }
     )
 
@@ -74,27 +92,26 @@ local function askGroq(input)
         table.insert(chatHistory, { role = "assistant", content = content })
         return content
     end
-    return "Error de conexion."
+    return "Error de red."
 end
 
--- Inicio del programa
+-- Main
 term.clear()
 term.setCursorPos(1,1)
-term.setTextColor(colors.orange)
-print("Hablar con la IA")
-term.setTextColor(colors.white)
+print("Consola lista. Escribe 'clear' para reiniciar.")
 
 while true do
     refreshUI()
+    term.setTextColor(colors.orange)
     write("\nMensaje: ")
+    term.setTextColor(colors.white)
     local input = read()
     
     if input == "clear" then
         chatHistory = { chatHistory[1] }
-        print("Memoria reseteada.")
-    else
+        print("Chat reiniciado.")
+    elseif #input > 0 then
         print("Consultando...")
-        local res = askGroq(input)
-        print("Respuesta: " .. cleanText(res))
+        askGroq(input)
     end
 end
